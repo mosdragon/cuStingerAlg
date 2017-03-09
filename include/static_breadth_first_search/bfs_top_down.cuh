@@ -58,7 +58,7 @@ public:
 protected: 
 	bfsData hostBfsData, *deviceBfsData;
 private: 
-	cusLoadBalance* cusLB;	
+	cusLoadBalance* cusLB;
 };
 
 
