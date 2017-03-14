@@ -179,29 +179,45 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 }
 
 
-void StreamingBC::InsertEdges(vertexId_t src, vertexId_t dst)
+void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
-	printf("InsertEdge\n");
 	vertexId_t *diffs_h = new vertexId_t[nr];
-
 	getDepthDifferences_host(src, dst, nr, diffs_h, trees_d);
+
+	int same = 0;
+	int adj = 0;
+	int nonadj = 0;
+	for (int k = 0; k < nr; k++)
+	{
+		if (diffs_h[k] == 0) {
+			same++;
+		} else if (abs(diffs_h[k]) == 1) {
+			adj++;
+		} else {
+			nonadj++;
+		}
+	}
+
+	// printf("Same level cases: %d\n", same);
+	// printf("Adjacent cases: %d\n", adj);
+	// printf("Non-adjacent cases: %d\n", nonadj);
 
 	delete[] diffs_h;
 }
 
 
-void StreamingBC::RemoveEdges(vertexId_t src, vertexId_t dst)
+void StreamingBC::RemoveEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
 
 }
 
 
 // diffs_h is an array of size K that shows stores d[src] - d[dst] in each position
-__host__ void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
+void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
 	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d)
 {
 	// TODO: Load balance this operation later
-	vertexId_t* diffs_d = (vertexId_t*) allocDeviceArray(1, sizeof(vertexId_t));
+	vertexId_t* diffs_d = (vertexId_t*) allocDeviceArray(numRoots, sizeof(vertexId_t));
 
 	dim3 numBlocks(1, 1);
 	int32_t threads = 32;
@@ -213,29 +229,8 @@ __host__ void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
 	getDepthDifferences_device<<<numBlocks, threadsPerBlock>>>(src, dst,
 		numRoots, diffs_d, trees_d, treesPerThreadBlock);
 
-	// copy the differences back over to host
+	// copy the differences back over to host array
 	copyArrayDeviceToHost(diffs_d, diffs_h, numRoots, sizeof(vertexId_t));
-
-
-	int same = 0;
-	int adj = 0;
-	int nonadj = 0;
-	for (int k = 0; k < numRoots; k++)
-	{
-		if (diffs_h[k] == 0) {
-			same++;
-		} else if (abs(diffs_h[k]) == 1) {
-			adj++;
-		} else {
-			nonadj++;
-		}
-	}
-
-	printf("Same level cases: %d\n", same);
-	printf("Adjacent cases: %d\n", adj);
-	printf("Non-adjacent cases: %d\n", nonadj);
-
-
 	freeDeviceArray(diffs_d);
 }
 
@@ -252,9 +247,8 @@ __global__ void getDepthDifferences_device(vertexId_t src, vertexId_t dst,
 		vertexId_t treeIdx = treeIdx_init + offset;
 		
 		if(treeIdx >= K) {
-			break;
+			return;
 		}
-
 		// Set diff_d[treeIdx] to the different in depths between src and dst
 		// at the treeIdx
 		diffs_d[treeIdx] = trees_d[treeIdx]->d[src] - trees_d[treeIdx]->d[dst];

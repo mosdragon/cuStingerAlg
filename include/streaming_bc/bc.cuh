@@ -20,8 +20,8 @@ public:
 	void Run(cuStinger& custing);
 	void Release();
 
-	void InsertEdges(vertexId_t src, vertexId_t dst);
-	void RemoveEdges(vertexId_t src, vertexId_t dst);
+	void InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst);
+	void RemoveEdge(cuStinger& custing, vertexId_t src, vertexId_t dst);
 
 	void SyncHostWithDevice(length_t k)
 	{
@@ -109,7 +109,7 @@ public:
 
 
 // diffs_h is an array of size K that shows stores d[src] - d[dst] in each position
-__host__ void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
+void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
 	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d);
 
 

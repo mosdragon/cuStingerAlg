@@ -35,8 +35,8 @@ public:
 	virtual void Run(cuStinger& custing) = 0;
 	virtual void Release() = 0;
 
-	virtual void InsertEdges(vertexId_t src, vertexId_t dst) = 0;
-	virtual void RemoveEdges(vertexId_t src, vertexId_t dst) = 0;
+	virtual void InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst) = 0;
+	virtual void RemoveEdge(cuStinger& custing, vertexId_t src, vertexId_t dst) = 0;
 
 };
 

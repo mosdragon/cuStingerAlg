@@ -284,12 +284,24 @@ int main(const int argc, char **argv)
 	sbc.Reset();
 
 	float totalTime = end_clock(ce_start, ce_stop);
+	cout << "Total time for Betweenness Centrality Computation: " << totalTime << endl;
+
+
+	// Now, insert a random edge
+	vertexId_t src = rand() % nv;
+	vertexId_t dst = rand() % nv;
+	
+	cout << "About to insert edge: (" << src << ", " << dst << ")" << endl;
+	start_clock(ce_start, ce_stop);
+	sbc.InsertEdge(custing, src, dst);
+
+	totalTime = end_clock(ce_start, ce_stop);
+	cout << "Done inserting. Total time taken:  " << totalTime  << endl;
+
 	// free resources
 	sbc.Release();
 	// Free memory
 	custing.freecuStinger();
-
-	cout << "Total time for Betweenness Centrality Computation: " << totalTime << endl;
 
 	if (options.verbose)
 	{
