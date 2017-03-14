@@ -28,6 +28,18 @@ public:
 	virtual void SyncDeviceWithHost() = 0;
 };
 
+class StreamingAlgorithm {
+public:
+	virtual void Init(cuStinger& custing) = 0;
+	virtual void Reset() = 0;
+	virtual void Run(cuStinger& custing) = 0;
+	virtual void Release() = 0;
+
+	virtual void InsertEdges(vertexId_t src, vertexId_t dst) = 0;
+	virtual void RemoveEdges(vertexId_t src, vertexId_t dst) = 0;
+
+};
+
 template <class T> 
 class Queue{
 public:

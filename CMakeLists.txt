@@ -86,12 +86,20 @@ cuda_add_executable(static_bc_tester
           src/load_balance.cu
           )
 
+cuda_add_executable(streaming_bc
+          src/streaming_bc/bc_main.cu
+          src/streaming_bc/bc.cu
+          src/streaming_bc/bc_tree.cu
+          src/load_balance.cu
+          )
+
 cuda_add_executable(cus-alg-tester 
           tests/alg-tester.cu
           )
 
 
 TARGET_LINK_LIBRARIES(static_bc_tester custingerAlgs custinger  /usr/local/cuda/lib64/libcudart.so)
+TARGET_LINK_LIBRARIES(streaming_bc custingerAlgs custinger  /usr/local/cuda/lib64/libcudart.so)
 
 TARGET_LINK_LIBRARIES(cuAlgCCT custingerAlgs custinger  /usr/local/cuda/lib64/libcudart.so)
 TARGET_LINK_LIBRARIES(cuAlgStCCT custingerAlgs custinger  /usr/local/cuda/lib64/libcudart.so)
