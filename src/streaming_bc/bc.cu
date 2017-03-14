@@ -182,7 +182,7 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
 	vertexId_t *diffs_h = new vertexId_t[nr];
-	getDepthDifferences_host(src, dst, nr, diffs_h, trees_d);
+	getDepthDifferences(src, dst, nr, diffs_h, trees_d);
 
 	int same = 0;
 	int adj = 0;
@@ -213,7 +213,7 @@ void StreamingBC::RemoveEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 
 
 // diffs_h is an array of size K that shows stores d[src] - d[dst] in each position
-void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
+void getDepthDifferences(vertexId_t src, vertexId_t dst,
 	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d)
 {
 	// TODO: Load balance this operation later
