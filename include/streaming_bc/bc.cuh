@@ -119,4 +119,12 @@ __global__ void getDepthDifferences_device(vertexId_t src, vertexId_t dst,
 	int32_t treesPerThreadBlock);
 
 
+// uhigh is the vertex that has lesser depth and ulow has greater depth
+void insertAdjacentLevel(bcTree** trees_d, length_t numRoots, 
+	vertexId_t uhigh, vertexId_t ulow);
+
+__global__ void insertAdjacentLevel_device(bcTree** trees_d, length_t numRoots,
+	vertexId_t uhigh, vertexId_t ulow, int32_t treesPerThreadBlock);
+
+
 } //Namespace

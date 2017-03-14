@@ -185,22 +185,45 @@ void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 	getDepthDifferences(src, dst, nr, diffs_h, trees_d);
 
 	int same = 0;
+	
 	int adj = 0;
 	int nonadj = 0;
+
+	int adjRev = 0;
+	int nonadjRev = 0;
 	for (int k = 0; k < nr; k++)
 	{
 		if (diffs_h[k] == 0) {
 			same++;
-		} else if (abs(diffs_h[k]) == 1) {
+		
+		} else if (diffs_h[k] == 1) {
+			// d[src] - d[dst] == 1
 			adj++;
-		} else {
+
+		} else if (diffs_h[k] == -1) {
+			// d[dst] - d[src] == 1
+			adjRev++;
+		
+		} else if (diffs_h[k] > 1) {
+			// d[src] - d[dst] > 1
 			nonadj++;
+		} else {
+			// d[dst] - d[src] > 1
+			nonadjRev++;
 		}
 	}
 
-	// printf("Same level cases: %d\n", same);
-	// printf("Adjacent cases: %d\n", adj);
-	// printf("Non-adjacent cases: %d\n", nonadj);
+	printf("Same level cases: %d\n", same);
+	printf("Adjacent cases: %d\n", adj);
+	printf("Non-adjacent cases: %d\n", nonadj);
+
+	for (int k = 0; k < nr; k++) {
+		if (diffs_h[k] == 1) {
+
+		} else if (diffs_h[k] == -1) {
+
+		}
+	}
 
 	delete[] diffs_h;
 }
@@ -257,4 +280,30 @@ __global__ void getDepthDifferences_device(vertexId_t src, vertexId_t dst,
 }
 
 
-} // cuStingerAlgs namespace 
+// uhigh is the vertex that has lesser depth and ulow has greater depth
+void insertAdjacentLevel(bcTree** trees_d, length_t numRoots, 
+	vertexId_t uhigh, vertexId_t ulow)
+{
+
+}
+
+__global__ void insertAdjacentLevel_device(bcTree** trees_d, length_t numRoots,
+	vertexId_t uhigh, vertexId_t ulow, int32_t treesPerThreadBlock)
+{
+	vertexId_t treeIdx_init = blockIdx.x * treesPerThreadBlock;
+	length_t K = numRoots;
+
+	for (vertexId_t offset = 0; offset < treesPerThreadBlock; offset++) {
+		vertexId_t treeIdx = treeIdx_init + offset;
+		
+		if(treeIdx >= K) {
+			return;
+		}
+		// Set diff_d[treeIdx] to the different in depths between src and dst
+		// at the treeIdx
+		// diffs_d[treeIdx] = trees_d[treeIdx]->d[src] - trees_d[treeIdx]->d[dst];
+	}
+}
+
+
+} // cuStingerAlgs namespace
