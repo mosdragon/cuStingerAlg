@@ -42,6 +42,7 @@ public:
 
 private:
 	bcForest *forest;
+	bcTree **trees_d;  // a device copy of the host array forest->trees_d
 	float *bc;  // the actual bc values array on the host
 	
 	// a float array which will contain a copy of the device delta array
@@ -105,5 +106,17 @@ public:
 	}
 
 }; // bcOperator
+
+
+// diffs_h is an array of size K that shows stores d[src] - d[dst] in each position
+__host__ void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
+	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d);
+
+
+// diffs_d is just like diffs_h except that it points to GPU memory
+__global__ void getDepthDifferences_device(vertexId_t src, vertexId_t dst,
+	length_t numRoots, vertexId_t* diffs_d, bcTree** trees_d,
+	int32_t treesPerThreadBlock);
+
 
 } //Namespace

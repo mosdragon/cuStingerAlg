@@ -31,6 +31,10 @@ void StreamingBC::Init(cuStinger& custing)
 	host_deltas = new float[custing.nv];
 	cusLB = new cusLoadBalance(custing.nv);
 
+	// Keep a device copy of the array forest->trees_d
+	trees_d = (bcTree**) allocDeviceArray(nr, sizeof(bcTree*));
+	copyArrayHostToDevice(forest->trees_d, trees_d, nr, sizeof(bcTree*));
+
 	if (nr == custing.nv)
 	{
 		approx = false;
@@ -74,6 +78,7 @@ void StreamingBC::Release()
 	delete cusLB;
 	delete[] host_deltas;
 	destroyBcForest(forest, nr);
+	freeDeviceArray(trees_d);
 }
 
 
@@ -85,6 +90,7 @@ void StreamingBC::Run(cuStinger& custing)
 		DependencyAccumulation(custing, k);
 	}
 }
+
 
 void StreamingBC::RunBfsTraversal(cuStinger& custing, length_t k)
 {
@@ -172,14 +178,87 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 	}
 }
 
+
 void StreamingBC::InsertEdges(vertexId_t src, vertexId_t dst)
 {
+	printf("InsertEdge\n");
+	vertexId_t *diffs_h = new vertexId_t[nr];
 
+	getDepthDifferences_host(src, dst, nr, diffs_h, trees_d);
+
+	delete[] diffs_h;
 }
 
 
 void StreamingBC::RemoveEdges(vertexId_t src, vertexId_t dst)
 {
+
+}
+
+
+// diffs_h is an array of size K that shows stores d[src] - d[dst] in each position
+__host__ void getDepthDifferences_host(vertexId_t src, vertexId_t dst,
+	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d)
+{
+	// TODO: Load balance this operation later
+	vertexId_t* diffs_d = (vertexId_t*) allocDeviceArray(1, sizeof(vertexId_t));
+
+	dim3 numBlocks(1, 1);
+	int32_t threads = 32;
+	dim3 threadsPerBlock(threads, 1);
+	int32_t treesPerThreadBlock = 128;
+
+	numBlocks.x = ceil((float) numRoots / (float) treesPerThreadBlock);
+
+	getDepthDifferences_device<<<numBlocks, threadsPerBlock>>>(src, dst,
+		numRoots, diffs_d, trees_d, treesPerThreadBlock);
+
+	// copy the differences back over to host
+	copyArrayDeviceToHost(diffs_d, diffs_h, numRoots, sizeof(vertexId_t));
+
+
+	int same = 0;
+	int adj = 0;
+	int nonadj = 0;
+	for (int k = 0; k < numRoots; k++)
+	{
+		if (diffs_h[k] == 0) {
+			same++;
+		} else if (abs(diffs_h[k]) == 1) {
+			adj++;
+		} else {
+			nonadj++;
+		}
+	}
+
+	printf("Same level cases: %d\n", same);
+	printf("Adjacent cases: %d\n", adj);
+	printf("Non-adjacent cases: %d\n", nonadj);
+
+
+	freeDeviceArray(diffs_d);
+}
+
+
+// diffs_d is just like diffs_h except that it points to GPU memory
+__global__ void getDepthDifferences_device(vertexId_t src, vertexId_t dst,
+	length_t numRoots, vertexId_t* diffs_d, bcTree** trees_d,
+	int32_t treesPerThreadBlock)
+{
+	vertexId_t treeIdx_init = blockIdx.x * treesPerThreadBlock;
+	length_t K = numRoots;
+
+	for (vertexId_t offset = 0; offset < treesPerThreadBlock; offset++) {
+		vertexId_t treeIdx = treeIdx_init + offset;
+		
+		if(treeIdx >= K) {
+			break;
+		}
+
+		// Set diff_d[treeIdx] to the different in depths between src and dst
+		// at the treeIdx
+		diffs_d[treeIdx] = trees_d[treeIdx]->d[src] - trees_d[treeIdx]->d[dst];
+	}
 
 }
 
