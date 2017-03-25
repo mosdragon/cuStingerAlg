@@ -22,8 +22,8 @@ bcTree* createHostBcTree(length_t nv)
 bcTree* createDeviceBcTree(length_t nv, bcTree *tree_h)
 {
 	int size = sizeof(bcTree);
-	size += 2 * nv * sizeof(vertexId_t);  // d and sigma
-	size += nv * sizeof(float);  // delta
+	size += 2 * nv * sizeof(vertexId_t);  // d and sigma arrays
+	size += nv * sizeof(float);  // delta array
 
 	char *starting_point = (char *) allocDeviceArray(1, size);
 	bcTree *tree_d = (bcTree*) starting_point;

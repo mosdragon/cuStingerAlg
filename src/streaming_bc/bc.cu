@@ -27,7 +27,7 @@ void StreamingBC::Init(cuStinger& custing)
 	{
 		forest->trees_h[k]->queue.Init(custing.nv);
 	}
-	
+
 	host_deltas = new float[custing.nv];
 	cusLB = new cusLoadBalance(custing.nv);
 
@@ -114,19 +114,19 @@ void StreamingBC::RunBfsTraversal(cuStinger& custing, length_t k)
 
 	length_t prevEnd = 1;
 	hostBcTree->offsets[0] = 1;
-	
+
 	while( hostBcTree->queue.getActiveQueueSize() > 0)
 	{
-		allVinA_TraverseEdges_LB<bcOperator::bcExpandFrontier>(custing, 
+		allVinA_TraverseEdges_LB<bcOperator::bcExpandFrontier>(custing,
 			deviceBcTree, *cusLB, hostBcTree->queue);
 		SyncHostWithDevice(k);
 
 		// Update cumulative offsets from start of queue
 		hostBcTree->queue.setQueueCurr(prevEnd);
-		
+
 		vertexId_t level = getLevel(k);
 		hostBcTree->offsets[level + 1] = hostBcTree->queue.getActiveQueueSize() + hostBcTree->offsets[level];
-		
+
 		prevEnd = hostBcTree->queue.getQueueEnd();
 
 		hostBcTree->currLevel++;
@@ -149,7 +149,7 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 	{
 		length_t start = hostBcTree->offsets[getLevel(k)];
 		length_t end = hostBcTree->offsets[getLevel(k) + 1];
-		
+
 		// // set queue start and end so the queue holds all nodes in one frontier
 		hostBcTree->queue.setQueueCurr(start);
 		hostBcTree->queue.setQueueEnd(end);
@@ -182,48 +182,34 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
 	vertexId_t *diffs_h = new vertexId_t[nr];
-	getDepthDifferences(src, dst, nr, diffs_h, trees_d);
+	getDepthDifferences(custing, src, dst, nr, diffs_h, trees_d);
 
-	int same = 0;
-	
+	SyncHostWithDevice();  // copy the updated ulow, uhigh assignments to host
+
+	// cases where ulow = dst and uhigh = src
 	int adj = 0;
 	int nonadj = 0;
 
+	// cases where ulow = src and uhigh = dst
 	int adjRev = 0;
 	int nonadjRev = 0;
 	for (int k = 0; k < nr; k++)
 	{
-		if (diffs_h[k] == 0) {
-			same++;
-		
-		} else if (diffs_h[k] == 1) {
-			// d[src] - d[dst] == 1
+		if (diffs_h[k] == 1) {
 			adj++;
-
-		} else if (diffs_h[k] == -1) {
-			// d[dst] - d[src] == 1
-			adjRev++;
-		
 		} else if (diffs_h[k] > 1) {
-			// d[src] - d[dst] > 1
 			nonadj++;
-		} else {
-			// d[dst] - d[src] > 1
+		} else if (diffs_h[k] == -1) {
+			adjRev++;
+		} else if (diffs_h[k] < -1) {
 			nonadjRev++;
 		}
 	}
 
-	printf("Same level cases: %d\n", same);
 	printf("Adjacent cases: %d\n", adj);
 	printf("Non-adjacent cases: %d\n", nonadj);
-
-	for (int k = 0; k < nr; k++) {
-		if (diffs_h[k] == 1) {
-
-		} else if (diffs_h[k] == -1) {
-
-		}
-	}
+	printf("REV Adjacent cases: %d\n", adjRev);
+	printf("REV Non-adjacent cases: %d\n", nonadjRev);
 
 	delete[] diffs_h;
 }
@@ -235,75 +221,52 @@ void StreamingBC::RemoveEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 }
 
 
-// diffs_h is an array of size K that shows stores d[src] - d[dst] in each position
-void getDepthDifferences(vertexId_t src, vertexId_t dst,
+void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
 	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d)
 {
-	// TODO: Load balance this operation later
-	vertexId_t* diffs_d = (vertexId_t*) allocDeviceArray(numRoots, sizeof(vertexId_t));
+	// TODO: optimize these device allocations
+	depthDiffs *dDiffs_h = new depthDiffs;
+	depthDiffs *dDiffs_d = (depthDiffs*) allocDeviceArray(1, sizeof(depthDiffs));
 
-	dim3 numBlocks(1, 1);
-	int32_t threads = 32;
-	dim3 threadsPerBlock(threads, 1);
-	int32_t treesPerThreadBlock = 128;
+	dDiffs_h->trees_d = trees_d;
+	dDiffs_h->numRoots = numRoots;
+	dDiffs_h->src = src;
+	dDiffs_h->dst = dst;
 
-	numBlocks.x = ceil((float) numRoots / (float) treesPerThreadBlock);
+	// allocate space on device for diffs_d
+	dDiffs_h->diffs_d = (vertexId_t*) allocDeviceArray(numRoots, sizeof(vertexId_t));
+	// copy contents of host struct onto device struct
+	copyArrayHostToDevice(dDiffs_h, dDiffs_d, 1, sizeof(depthDiffs));
 
-	getDepthDifferences_device<<<numBlocks, threadsPerBlock>>>(src, dst,
-		numRoots, diffs_d, trees_d, treesPerThreadBlock);
-
-	// copy the differences back over to host array
-	copyArrayDeviceToHost(diffs_d, diffs_h, numRoots, sizeof(vertexId_t));
-	freeDeviceArray(diffs_d);
-}
-
-
-// diffs_d is just like diffs_h except that it points to GPU memory
-__global__ void getDepthDifferences_device(vertexId_t src, vertexId_t dst,
-	length_t numRoots, vertexId_t* diffs_d, bcTree** trees_d,
-	int32_t treesPerThreadBlock)
-{
-	vertexId_t treeIdx_init = blockIdx.x * treesPerThreadBlock;
-	length_t K = numRoots;
-
-	for (vertexId_t offset = 0; offset < treesPerThreadBlock; offset++) {
-		vertexId_t treeIdx = treeIdx_init + offset;
-		
-		if(treeIdx >= K) {
-			return;
-		}
-		// Set diff_d[treeIdx] to the different in depths between src and dst
-		// at the treeIdx
-		diffs_d[treeIdx] = trees_d[treeIdx]->d[src] - trees_d[treeIdx]->d[dst];
+	// we need an array of "roots" that we can use with our operator
+	vertexId_t* rootArray_h = new vertexId_t[numRoots];
+	for (int k = 0; k < numRoots; k++) {
+		rootArray_h[k] = k;
 	}
 
+	// need the same array on the device
+	vertexId_t* rootArray_d = (vertexId_t*) allocDeviceArray(numRoots,
+		sizeof(vertexId_t));
+
+	copyArrayHostToDevice(rootArray_h, rootArray_d, numRoots,
+		sizeof(vertexId_t));
+
+	// now, use a streaming operator to get the depth differences and ulow and uhigh assignments
+	allVinA_TraverseVertices<bcOperator::preprocessEdge>(custing,
+		(void*) dDiffs_d, rootArray_d, numRoots);
+
+	// store the results in diffs_h
+	copyArrayDeviceToHost(dDiffs_h->diffs_d, diffs_h, numRoots,
+		sizeof(vertexId_t));
+
+	// Free device memory
+	freeDeviceArray(rootArray_d);
+	freeDeviceArray(dDiffs_d);
+	freeDeviceArray(dDiffs_h->diffs_d);
+
+	// Free host memory
+	delete[] rootArray_h;
+	delete dDiffs_h;
 }
-
-
-// uhigh is the vertex that has lesser depth and ulow has greater depth
-void insertAdjacentLevel(bcTree** trees_d, length_t numRoots, 
-	vertexId_t uhigh, vertexId_t ulow)
-{
-
-}
-
-__global__ void insertAdjacentLevel_device(bcTree** trees_d, length_t numRoots,
-	vertexId_t uhigh, vertexId_t ulow, int32_t treesPerThreadBlock)
-{
-	vertexId_t treeIdx_init = blockIdx.x * treesPerThreadBlock;
-	length_t K = numRoots;
-
-	for (vertexId_t offset = 0; offset < treesPerThreadBlock; offset++) {
-		vertexId_t treeIdx = treeIdx_init + offset;
-		
-		if(treeIdx >= K) {
-			return;
-		}
-		// Set diff_d[treeIdx] to the different in depths between src and dst
-		// at the treeIdx
-		// diffs_d[treeIdx] = trees_d[treeIdx]->d[src] - trees_d[treeIdx]->d[dst];
-	}
-}
-
 
 } // cuStingerAlgs namespace

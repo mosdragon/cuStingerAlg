@@ -16,8 +16,12 @@ typedef struct {
 
     vertexQueue queue;
 
+    // used during edge insertions/deletions
+    vertexId_t ulow;
+    vertexId_t uhigh;
+
     // offsets stores ending position of each frontier in the queue.
-    // Used during dependency accumulation. Stored in host memory
+    // Used during dependency accumulation. Stored in host memory only
     float* offsets;
 } bcTree;
 
