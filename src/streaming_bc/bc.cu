@@ -186,22 +186,16 @@ void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 
 	SyncHostWithDevice();  // copy the updated ulow, uhigh assignments to host
 
-	// cases where ulow = dst and uhigh = src
+	// the count of adjacent cases and nonadjacent cases
 	vertexId_t adj = 0;
 	vertexId_t nonadj = 0;
-	// cases where ulow = src and uhigh = dst
-	vertexId_t adjRev = 0;
-	vertexId_t nonadjRev = 0;
+	vertexId_t size;  // the overall size of the case array
 
-	vertexId_t size = 0;
-
-	vertexId_t* caseArray_h = buildCaseArray(diffs_h, nr, size, adj, nonadj,
-		adjRev, nonadjRev);
+	vertexId_t* caseArray_h = buildCaseArray(diffs_h, nr, size, adj, nonadj);
 
 	vertexId_t* caseArray_d = (vertexId_t*) allocDeviceArray(size, sizeof(vertexId_t));
 	copyArrayHostToDevice(caseArray_h, caseArray_d, size, sizeof(vertexId_t));
 	// Now, run an operator to handle each case
-
 
 	delete[] diffs_h;
 	delete[] caseArray_h;
@@ -264,46 +258,30 @@ void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
 
 
 vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
-	vertexId_t& size, vertexId_t& adj, vertexId_t& nonadj,
-	vertexId_t& adjRev, vertexId_t& nonadjRev)
+	vertexId_t& size, vertexId_t& adj, vertexId_t& nonadj)
 {
-	for (int k = 0; k < numRoots; k++)
-	{
-		if (diffs_h[k] == 1) {
+	for (int k = 0; k < numRoots; k++) {
+		if (abs(diffs_h[k]) == 1) {
 			adj++;
-		} else if (diffs_h[k] == -1) {
-			adjRev++;
-		} else if (diffs_h[k] > 1) {
+		} else if (abs(diffs_h[k]) > 1) {
 			nonadj++;
-		} else if (diffs_h[k] < -1) {
-			nonadjRev++;
 		}
 	}
 
 	// positions in the array of where to place each case type
-	vertexId_t posA = 0;  // adj cases
-	vertexId_t posB = posA + adj;  // adjRev cases
-	vertexId_t posC = posB + adjRev;  // nonadj cases
-	vertexId_t posD = posC + nonadj;  // nonadjRev cases
-
-	size = posD + nonadjRev;
+	vertexId_t posAdj = 0;  // index used for adjacent cases
+	vertexId_t posNonadj = adj;  // index used for nonadjacent cases
+	size = adj + nonadj;
 
 	vertexId_t* caseArray = new vertexId_t[size];
 
-	for (int k = 0; k < numRoots; k++)
-	{
-		// printf("k: %d\tdiff: %d\n", k, diffs_h[k]);
-		if (diffs_h[k] == 1) {
-			caseArray[posA++] = k;
-		} else if (diffs_h[k] == -1) {
-			caseArray[posB++] = k;
-		} else if (diffs_h[k] > 1) {
-			caseArray[posC++] = k;
-		} else if (diffs_h[k] < -1) {
-			caseArray[posD++] = k;
+	for (int k = 0; k < numRoots; k++) {
+		if (abs(diffs_h[k]) == 1) {
+			caseArray[posAdj++] = k;
+		} else if (abs(diffs_h[k]) > 1) {
+			caseArray[posNonadj++] = k;
 		}
 	}
-
 	return caseArray;
 }
 
