@@ -168,4 +168,10 @@ public:
 void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
 	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d);
 
+
+// Takes a diff_h array and creates an array with consecutive sections
+vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
+	vertexId_t& size, vertexId_t& adj, vertexId_t& nonadj,
+	vertexId_t& adjRev, vertexId_t& nonadjRev);
+
 } //Namespace
