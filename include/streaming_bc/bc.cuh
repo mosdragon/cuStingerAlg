@@ -6,11 +6,41 @@
 
 // Betweenness Centrality
 
+#define UNTOUCHED 0
+#define UP 128
+#define DOWN -128
+
 namespace cuStingerAlgs {
 
+typedef struct {
+	// diffs_d is an array of size numRoots that shows stores d[src] - d[dst] in each position
+	vertexId_t* diffs_d;
+	// a device array of tree pointers
+	bcTree** trees_d;
+
+	length_t numRoots;
+	vertexId_t src;  // the src of the edge being inserted
+	vertexId_t dst;  // the dst of the edge being inserted
+} depthDiffs;
+
+
+typedef struct {
+	vertexQueue upQueue;
+	vertexQueue downQueue;
+	length_t numRoots;
+	vertexId_t root;
+	bcTree** trees_d;
+
+	char* t;  // will take on values of UNTOUCHED, DOWN, or UP
+	vertexId_t* dP;
+	vertexId_t* sigmaHat;
+
+} adjInsertData;
+
+
 class StreamingBC:public StreamingAlgorithm {
-public:	
-	
+public:
+
 	StreamingBC(length_t numRoots) {
 		nr = numRoots;
 	}
@@ -49,7 +79,7 @@ public:
 
 	void RunBfsTraversal(cuStinger& custing, length_t k);
 	void DependencyAccumulation(cuStinger& custing, length_t k);
-	
+
 	length_t getLevel(length_t k) { return forest->trees_h[k]->currLevel; }
 
 	// Must pass a pointer to bc values (of length custing.nv)
@@ -66,18 +96,16 @@ private:
 	cusLoadBalance* cusLB;  // load balancer
 	length_t nr;  // number of roots/trees
 	bool approx;
-};
 
-typedef struct {
-	// diffs_d is an array of size numRoots that shows stores d[src] - d[dst] in each position
-	vertexId_t* diffs_d;
-	// a device array of tree pointers
-	bcTree** trees_d;
-	
-	length_t numRoots;
-	vertexId_t src;  // the src of the edge being inserted
-	vertexId_t dst;  // the dst of the edge being inserted
-} depthDiffs;
+
+	// private helper functions
+	void insertionAdj(cuStinger& custing, vertexId_t* adjRoots_d,
+		vertexId_t adjCount);
+
+	void insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
+		adjInsertData* data_d, vertexId_t treeIdx);
+
+};
 
 
 class bcOperator:public StreamingAlgorithm {
@@ -113,35 +141,6 @@ public:
 	}
 
 
-	// Computes the depth differences between src and dst and
-	// assigns vertices ulow and uhigh
-	static __device__ __forceinline__ void preprocessEdge(cuStinger* custing,
-		vertexId_t treeRoot, void* metadata)
-	{
-		depthDiffs* dDiffs_d = (depthDiffs*) metadata;
-
-		vertexId_t src = dDiffs_d->src;
-		vertexId_t dst = dDiffs_d->dst;
-
-		vertexId_t* depths = dDiffs_d->trees_d[treeRoot]->d;
-		vertexId_t diff = depths[dst] - depths[src];
-
-		dDiffs_d->diffs_d[treeRoot] = diff;
-
-		// assign ulow and uhigh
-		bcTree *tree_d = dDiffs_d->trees_d[treeRoot];
-		if (diff > 0) {
-			// if difference is positive, dst is "below" src
-			tree_d->ulow = dst;
-			tree_d->uhigh = src;
-		} else if (diff < 0) {
-			// if difference is negative, src is "below" dst
-			tree_d->ulow = src;
-			tree_d->uhigh = dst;
-		}
-	}
-
-
 	// Dependency accumulation for one frontier
 	static __device__ __forceinline__ void dependencyAccumulation(cuStinger* custing,
 		vertexId_t src, vertexId_t dst, void* metadata)
@@ -161,6 +160,97 @@ public:
 		}
 	}
 
+
+	// Computes the depth differences between src and dst and
+	// assigns vertices ulow and uhigh
+	static __device__ __forceinline__ void preprocessEdge(cuStinger* custing,
+		vertexId_t treeIdx, void* metadata)
+	{
+		depthDiffs* dDiffs_d = (depthDiffs*) metadata;
+
+		vertexId_t src = dDiffs_d->src;
+		vertexId_t dst = dDiffs_d->dst;
+
+		vertexId_t* depths = dDiffs_d->trees_d[treeIdx]->d;
+		vertexId_t diff = depths[dst] - depths[src];
+
+		dDiffs_d->diffs_d[treeIdx] = diff;
+
+		// assign ulow and uhigh
+		bcTree *tree_d = dDiffs_d->trees_d[treeIdx];
+		if (diff > 0) {
+			// if difference is positive, dst is "below" src
+			tree_d->ulow = dst;
+			tree_d->uhigh = src;
+		} else if (diff < 0) {
+			// if difference is negative, src is "below" dst
+			tree_d->ulow = src;
+			tree_d->uhigh = dst;
+		}
+	}
+
+
+	// Initializes variables for adjacent level insertion
+	static __device__ __forceinline__ void initAdjInsert(cuStinger* custing,
+		vertexId_t treeIdx, void* metadata)
+	{
+		adjInsertData* data_d = (adjInsertData*) metadata;
+		bcTree* tree = data_d->trees_d[treeIdx];
+
+		// printf("Ch1\n");
+		data_d->root = treeIdx;
+
+		for (vertexId_t i = 0; i < custing->nv; i++) {
+			data_d->dP[i] = 0;
+			data_d->t[i] = UNTOUCHED;
+			// printf("Ch2\n");
+			data_d->sigmaHat[i] = tree->sigma[i];
+			// printf("Ch3\n");
+ 		}
+
+ 		vertexId_t ulow = tree->ulow;
+		vertexId_t uhigh = tree->uhigh;
+
+		// printf("Before enqueue\n");
+
+		data_d->upQueue.enqueue(ulow);
+		data_d->downQueue.enqueue(ulow);
+
+		// printf("After\n");
+
+		data_d->t[ulow] = DOWN;
+		data_d->dP[ulow] = tree->sigma[uhigh];
+		data_d->sigmaHat[ulow] += data_d->dP[ulow];
+
+		// printf("Finished\n");
+	}
+
+
+	static __device__ __forceinline__ void insertionAdjExpandFrontier(
+		cuStinger* custing, vertexId_t src, vertexId_t dst, void* metadata)
+	{
+		vertexId_t v = src;
+		vertexId_t w = dst;
+
+		adjInsertData* data_d = (adjInsertData*) metadata;
+		bcTree *tree = data_d->trees_d[data_d->root];
+
+		if (tree->d[w] == tree->d[v] + 1) {
+			if (data_d->t[w] == UNTOUCHED) {
+				data_d->downQueue.enqueue(w);
+				data_d->upQueue.enqueue(w);
+				data_d->t[w] = DOWN;
+				tree->d[w] = tree->d[v] + 1;
+				data_d->dP[w] = data_d->dP[v];
+
+			} else {
+				data_d->dP[w] += data_d->dP[v];
+			}
+
+			data_d->sigmaHat[w] += data_d->dP[v];
+		}
+	}
+
 }; // bcOperator
 
 
@@ -172,5 +262,12 @@ void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
 // Takes a diff_h array and creates an array with consecutive sections
 vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
 	vertexId_t& size, vertexId_t& adj, vertexId_t& nonadj);
+
+
+// void insertionAdj(cuStinger& custing, vertexId_t* adjRoots_d,
+// 	vertexId_t adjCount, bcForest *forest, bcTree** trees_d);
+
+void insertionNonadj(cuStinger& custing, vertexId_t* nonadjRoots,
+	vertexId_t nonadjCount, bcTree** trees_d);
 
 } //Namespace

@@ -115,7 +115,7 @@ void StreamingBC::RunBfsTraversal(cuStinger& custing, length_t k)
 	length_t prevEnd = 1;
 	hostBcTree->offsets[0] = 1;
 
-	while( hostBcTree->queue.getActiveQueueSize() > 0)
+	while(hostBcTree->queue.getActiveQueueSize() > 0)
 	{
 		allVinA_TraverseEdges_LB<bcOperator::bcExpandFrontier>(custing,
 			deviceBcTree, *cusLB, hostBcTree->queue);
@@ -195,8 +195,13 @@ void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 
 	vertexId_t* caseArray_d = (vertexId_t*) allocDeviceArray(size, sizeof(vertexId_t));
 	copyArrayHostToDevice(caseArray_h, caseArray_d, size, sizeof(vertexId_t));
-	// Now, run an operator to handle each case
 
+
+	insertionAdj(custing, caseArray_d, adj);
+
+	// insertionNonadj(custing, caseArray_h + adj, nonadj, trees_d);
+
+	freeDeviceArray(caseArray_d);
 	delete[] diffs_h;
 	delete[] caseArray_h;
 }
@@ -283,6 +288,80 @@ vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
 		}
 	}
 	return caseArray;
+}
+
+void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_d,
+	vertexId_t adjCount)
+{
+
+	printf("insertionAdj begin\n");
+	adjInsertData data_h;
+	data_h.trees_d = trees_d;
+	data_h.numRoots = forest->numRoots;
+	data_h.upQueue.Init(custing.nv + 1);
+	data_h.downQueue.Init(custing.nv + 1);
+
+	// TODO: optimize these allocations
+	data_h.t =  (char*) allocDeviceArray(custing.nv, sizeof(char));
+	data_h.dP = (vertexId_t*) allocDeviceArray(custing.nv, sizeof(vertexId_t));
+	data_h.sigmaHat = (vertexId_t*) allocDeviceArray(custing.nv, sizeof(vertexId_t));
+
+	adjInsertData* data_d = (adjInsertData*) allocDeviceArray(1,
+		sizeof(adjInsertData));
+	copyArrayHostToDevice(&data_h, data_d, 1, sizeof(adjInsertData));
+
+	// run algorithm sequentially for each adjacent-case tree
+	for (int k = 0; k < adjCount; k++) {
+		printf("Loop begin\n");
+		// 1: INITIALIZATION
+		// Clear upQueue and downQueue
+		data_h.upQueue.resetQueue();
+		data_h.downQueue.resetQueue();
+
+		allVinA_TraverseVertices<bcOperator::initAdjInsert>(custing,
+			(void*) data_d, adjRoots_d + k, 1);
+
+		insertionAdjRunBFS(custing, &data_h, data_d, k);
+
+		printf("Finished initialization\n");
+
+		// run the operator on a single tree
+		// allVinA_TraverseEdges_LB<>();
+	}
+
+	freeDeviceArray(data_d);
+	freeDeviceArray(data_h.t);
+	freeDeviceArray(data_h.dP);
+	freeDeviceArray(data_h.sigmaHat);
+	printf("Finished adj cases\n");
+}
+
+void StreamingBC::insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
+	adjInsertData* data_d, vertexId_t treeIdx)
+{
+	length_t prevEnd = 1;
+	bcTree *tree = forest->trees_h[treeIdx];
+	tree->currLevel = 0;
+	SyncDeviceWithHost(treeIdx);
+	while(data_h->downQueue.getActiveQueueSize() > 0)
+	{
+		allVinA_TraverseEdges_LB<bcOperator::insertionAdjExpandFrontier>(custing,
+			(void*) data_d, *cusLB, data_h->downQueue);
+		SyncHostWithDevice(treeIdx);
+
+		data_h->downQueue.setQueueCurr(prevEnd);
+		prevEnd = data_h->downQueue.getQueueEnd();
+
+		tree->currLevel++;
+		SyncDeviceWithHost(treeIdx);
+	}
+}
+
+
+void insertionNonadj(cuStinger& custing, vertexId_t* nonadjRoots,
+	vertexId_t nonadjCount, bcTree** trees_d)
+{
+
 }
 
 } // cuStingerAlgs namespace
