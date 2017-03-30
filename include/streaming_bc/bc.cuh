@@ -8,7 +8,7 @@
 
 #define UNTOUCHED 0
 #define UP 128
-#define DOWN -128
+#define DOWN 64
 
 namespace cuStingerAlgs {
 
@@ -25,8 +25,8 @@ typedef struct {
 
 
 typedef struct {
-	vertexQueue upQueue;
-	vertexQueue downQueue;
+	vertexQueue levelQueue;
+	vertexQueue bfsQueue;
 	length_t numRoots;
 	vertexId_t root;
 	bcTree** trees_d;
@@ -34,6 +34,11 @@ typedef struct {
 	char* t;  // will take on values of UNTOUCHED, DOWN, or UP
 	vertexId_t* dP;
 	vertexId_t* sigmaHat;
+	float* deltaHat;
+	float* bcVals;
+
+	// Host-only tracking of levelQueue offsets
+	vertexId_t* frontierOffsets;
 
 } adjInsertData;
 
@@ -103,6 +108,9 @@ private:
 		vertexId_t adjCount);
 
 	void insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
+		adjInsertData* data_d, vertexId_t treeIdx);
+
+	void insertionAdjRunDA(cuStinger& custing, adjInsertData* data_h,
 		adjInsertData* data_d, vertexId_t treeIdx);
 
 };
@@ -190,8 +198,8 @@ public:
 	}
 
 
-	// Initializes variables for adjacent level insertion
-	static __device__ __forceinline__ void initAdjInsert(cuStinger* custing,
+	// Adjacent Insertion: Initialization
+	static __device__ __forceinline__ void insertionAdjInit(cuStinger* custing,
 		vertexId_t treeIdx, void* metadata)
 	{
 		adjInsertData* data_d = (adjInsertData*) metadata;
@@ -206,6 +214,7 @@ public:
 			// printf("Ch2\n");
 			data_d->sigmaHat[i] = tree->sigma[i];
 			// printf("Ch3\n");
+			data_d->deltaHat[i] = 0;
  		}
 
  		vertexId_t ulow = tree->ulow;
@@ -213,8 +222,8 @@ public:
 
 		// printf("Before enqueue\n");
 
-		data_d->upQueue.enqueue(ulow);
-		data_d->downQueue.enqueue(ulow);
+		data_d->levelQueue.enqueue(ulow);
+		data_d->bfsQueue.enqueue(ulow);
 
 		// printf("After\n");
 
@@ -225,7 +234,7 @@ public:
 		// printf("Finished\n");
 	}
 
-
+	// Adjacent Insertion: BFS Expand Frontier
 	static __device__ __forceinline__ void insertionAdjExpandFrontier(
 		cuStinger* custing, vertexId_t src, vertexId_t dst, void* metadata)
 	{
@@ -237,8 +246,8 @@ public:
 
 		if (tree->d[w] == tree->d[v] + 1) {
 			if (data_d->t[w] == UNTOUCHED) {
-				data_d->downQueue.enqueue(w);
-				data_d->upQueue.enqueue(w);
+				data_d->bfsQueue.enqueue(w);
+				data_d->levelQueue.enqueue(w);
 				data_d->t[w] = DOWN;
 				tree->d[w] = tree->d[v] + 1;
 				data_d->dP[w] = data_d->dP[v];
@@ -248,6 +257,56 @@ public:
 			}
 
 			data_d->sigmaHat[w] += data_d->dP[v];
+		}
+	}
+
+
+	// Adjacent Insertion: Dependency accumulation
+	static __device__ __forceinline__ void insertionAdjDA(cuStinger* custing,
+		vertexId_t src, vertexId_t dst, void* metadata)
+	{
+		vertexId_t v = src;
+		vertexId_t w = dst;
+
+		adjInsertData* data_d = (adjInsertData*) metadata;
+		bcTree *tree = data_d->trees_d[data_d->root];
+
+		vertexId_t* sigmaHat = data_d->sigmaHat;
+		float* deltaHat = data_d->deltaHat;
+
+		// ensure v belongs to P[w]
+		if (tree->d[w] == tree->d[v] + 1) {
+			if (data_d->t[v] == UNTOUCHED) {
+				// TODO: figure out how to enqueue to Q[level - 1]
+				data_d->levelQueue.enqueue(v);
+				data_d->t[v] = UP;
+				deltaHat[v] = tree->delta[v];
+			}
+
+			deltaHat[v] += ((float) sigmaHat[v] / sigmaHat[w]) * (1 + deltaHat[w]);
+
+			if (data_d->t[v] == UP && (v != tree->uhigh || w != tree->ulow)) {
+				deltaHat[v] -= ((float) tree->sigma[v] / tree->sigma[w]) * (1 + tree->delta[w]);
+			}
+
+			if (w != tree->root) {
+				// update BC values
+				data_d->bcVals[w] += deltaHat[w] - tree->delta[w];
+			}
+		}
+	}
+
+	// Adjacent Insertion: Completion
+	// Updates sigma and delta values
+	static __device__ __forceinline__ void insertionAdjEnd(cuStinger* custing,
+		vertexId_t src, void* metadata)
+	{
+		adjInsertData* data_d = (adjInsertData*) metadata;
+		bcTree *tree = data_d->trees_d[data_d->root];
+
+		tree->sigma[src] = data_d->sigmaHat[src];
+		if (data_d->t[src] == UNTOUCHED) {
+			tree->delta[src] = data_d->deltaHat[src];
 		}
 	}
 

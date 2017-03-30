@@ -281,11 +281,9 @@ int main(const int argc, char **argv)
 	start_clock(ce_start, ce_stop);
 
 	sbc.Run(custing);
-	sbc.Reset();
 
 	float totalTime = end_clock(ce_start, ce_stop);
 	cout << "Total time for Betweenness Centrality Computation: " << totalTime << endl;
-
 
 	// Now, insert a random edge
 	vertexId_t src = rand() % nv;
@@ -298,25 +296,74 @@ int main(const int argc, char **argv)
 	totalTime = end_clock(ce_start, ce_stop);
 	cout << "Done inserting. Total time taken:  " << totalTime  << endl;
 
-	// free resources
-	sbc.Release();
-	// Free memory
-	custing.freecuStinger();
-
-	if (options.verbose)
-	{
+	if (options.verbose) {
 		cout << "RESULTS: " << endl;
 
-		for (int k = 0; k < nv; k++)
-		{
+		for (int k = 0; k < nv; k++) {
 			cout << "[ " << k  << " ]: " << bc[k] << endl;
 		}
 	}
+
+	cout << "=======================================" << endl;
+	cout << "Now doing brute force edge insertion" << endl;
+
+
+	// Add that same edge into the graph and run static bc on it
+	// TODO: figure out how to add edge
+	length_t allocs;
+	// auto bud = new BatchUpdateData(1, true, custing.nv);
+	BatchUpdateData bud(1 , true, custing.nv);
+	vertexId_t *srcs = bud.getSrc();
+	vertexId_t *dsts = bud.getDst();
+	srcs[0] = src;
+	dsts[0] = dst;
+
+	BatchUpdate bu = BatchUpdate(bud);
+
+	custing.edgeInsertions(bu, allocs);
+
+	float *bc_static = new float[nv];
+	for (int k = 0; k < nv; k++) {
+		bc_static[k] = 0;
+	}	
+
+	StreamingBC sbc2(options.numRoots);
+	sbc2.Init(custing);
+	sbc2.setInputParameters(bc_static);
+
+	start_clock(ce_start, ce_stop);
+
+	sbc2.Run(custing);
+
+	totalTime = end_clock(ce_start, ce_stop);
+	cout << "Done with static. Total time taken:  " << totalTime  << endl;
+
+	bool same = true;
+	for (int k = 0; k < nv; k++) {
+		if (bc_static[k] != bc[k]) {
+			same = false;
+			break;
+		}
+	}
+
+	cout << "Are they same?   :: " << (same?"true":"false") << endl;
+
+	// free resources
+	sbc.Reset();
+	sbc.Release();
+
+	// free resources
+	sbc2.Reset();
+	sbc2.Release();
+
+	// Free memory
+	custing.freecuStinger();
 
 	free(off);
 	free(adj);
 
 	delete[] bc;
+	delete[] bc_static;
 
     return 0;
 }
