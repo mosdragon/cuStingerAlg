@@ -23,9 +23,20 @@ void StreamingBC::Init(cuStinger& custing)
 {
 	forest = createBcForest(custing.nv, nr);
 
+	if (nr == custing.nv) {
+		approx = false;
+	}
+
 	for (length_t k = 0; k < nr; k++)
 	{
 		forest->trees_h[k]->queue.Init(custing.nv);
+
+		// Set the root for each tree
+		if (approx) {
+			forest->trees_h[k]->root = rand() % forest->nv;
+		} else {
+			forest->trees_h[k]->root = k;
+		}
 	}
 
 	host_deltas = new float[custing.nv];
@@ -35,10 +46,6 @@ void StreamingBC::Init(cuStinger& custing)
 	trees_d = (bcTree**) allocDeviceArray(nr, sizeof(bcTree*));
 	copyArrayHostToDevice(forest->trees_d, trees_d, nr, sizeof(bcTree*));
 
-	if (nr == custing.nv)
-	{
-		approx = false;
-	}
 	Reset();
 }
 
@@ -50,12 +57,6 @@ void StreamingBC::Reset()
 		bcTree *hostBcTree = forest->trees_h[k];
 		hostBcTree->queue.resetQueue();
 		hostBcTree->currLevel = 0;
-
-		if (approx) {
-			hostBcTree->root = rand() % forest->nv;
-		} else {
-			hostBcTree->root = k;
-		}
 
 		// initialize all offsets to zero
 		for (int i = 0; i < hostBcTree->nv; i++)
@@ -175,6 +176,71 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 	}
 }
 
+// TODO: Remove. This is brute force
+// void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
+// {
+// 	// vertexId_t *diffs_h = new vertexId_t[nr];
+// 	// getDepthDifferences(custing, src, dst, nr, diffs_h, trees_d);
+
+// 	// SyncHostWithDevice();  // copy all ulow, uhigh assignments to host
+
+// 	// the count of adjacent cases and nonadjacent cases
+// 	// vertexId_t adj = 0;
+// 	// vertexId_t nonadj = 0;
+// 	// vertexId_t size;  // the overall size of the case array
+
+// 	vertexId_t* caseArray_h = new vertexId_t[nr];
+// 	for (int i = 0; i < nr; i++) {
+// 		caseArray_h[i] = i;
+// 	}
+
+// 	// Run original BFS and DA on these nonadj case roots
+	
+// 	// Insert edge into custing
+// 	length_t allocs;
+// 	BatchUpdateData bud(1 , true, custing.nv);
+// 	vertexId_t *srcs = bud.getSrc();
+// 	vertexId_t *dsts = bud.getDst();
+// 	srcs[0] = src;
+// 	dsts[0] = dst;
+	
+// 	// srcs[1] = dst;
+// 	// dsts[1] = src;
+
+// 	BatchUpdate bu = BatchUpdate(bud);
+// 	custing.edgeInsertions(bu, allocs);
+
+// 	printf("Done adding (%d, %d) into custing\n", src, dst);
+
+// 	for (int i = 0; i < nr; i++) {
+// 		vertexId_t k = caseArray_h[i];
+
+// 		forest->trees_h[k]->queue.resetQueue();
+// 		forest->trees_h[k]->currLevel = 0;
+
+// 		// TODO: Remove delta of this tree from the bc values
+// 		copyArrayDeviceToHost(forest->trees_h[k]->delta, host_deltas,
+// 			custing.nv, sizeof(float));
+
+// 		for (int j = 0; j < custing.nv; j++) {
+// 			if (j != forest->trees_h[k]->root) {
+// 				bc[j] -= host_deltas[j];
+// 			}
+// 		}
+		
+// 		printf("K: %d\tidx: %d\n", k, i);
+// 		RunBfsTraversal(custing, k);
+// 		printf("Done BFS traversal\n");
+// 		DependencyAccumulation(custing, k);
+// 		printf("Done DA\n");
+// 	}
+
+// 	// insertionNonadj(custing, caseArray_d + adj, nonadj, trees_d);
+
+// 	// freeDeviceArray(caseArray_d);
+// 	// delete[] diffs_h;
+// 	delete[] caseArray_h;
+// }
 
 void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
@@ -189,23 +255,51 @@ void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 	vertexId_t size;  // the overall size of the case array
 
 	vertexId_t* caseArray_h = buildCaseArray(diffs_h, nr, size, adj, nonadj);
-
-	vertexId_t* caseArray_d = (vertexId_t*) allocDeviceArray(size, sizeof(vertexId_t));
+	vertexId_t* caseArray_d = (vertexId_t*) allocDeviceArray(size,
+		sizeof(vertexId_t));
 	copyArrayHostToDevice(caseArray_h, caseArray_d, size, sizeof(vertexId_t));
+
+	printf("Done adding (%d, %d) into custing\n", src, dst);
+
 
 	insertionAdj(custing, caseArray_d, adj);
 
+	// Insert edge into custing
+	length_t allocs;
+	BatchUpdateData bud(1 , true, custing.nv);
+	vertexId_t *srcs = bud.getSrc();
+	vertexId_t *dsts = bud.getDst();
+	srcs[0] = src;
+	dsts[0] = dst;
+
+	BatchUpdate bu = BatchUpdate(bud);
+	custing.edgeInsertions(bu, allocs);
 
 	// Run original BFS and DA on these nonadj case roots
-	// length_t k;
-	// for (int i = 0; i < nonadj; i++) {
-	// 	k = caseArray_h[adj + i];
-	// 	printf("K: %d\n", k);
-	// 	RunBfsTraversal(custing, k);
-	// 	printf("Done BFS traversal\n");
-	// // 	DependencyAccumulation(custing, k);
-	// 	printf("Done DA\n");
-	// }
+	vertexId_t k;
+	for (int i = 0; i < nonadj; i++) {
+		k = caseArray_h[adj + i];
+
+		forest->trees_h[k]->queue.resetQueue();
+		forest->trees_h[k]->currLevel = 0;
+
+		// TODO: Remove delta of this tree from the bc values
+		copyArrayDeviceToHost(forest->trees_h[k]->delta, host_deltas,
+			custing.nv, sizeof(float));
+
+		for (int j = 0; j < custing.nv; j++) {
+			if (j != forest->trees_h[k]->root) {
+				bc[j] -= host_deltas[j];
+			}
+		}
+
+		// Now run static bc
+		printf("K: %d\tidx: %d\n", k, adj+i);
+		RunBfsTraversal(custing, k);
+		printf("Done BFS traversal\n");
+		DependencyAccumulation(custing, k);
+		printf("Done DA\n");
+	}
 
 	// insertionNonadj(custing, caseArray_d + adj, nonadj, trees_d);
 

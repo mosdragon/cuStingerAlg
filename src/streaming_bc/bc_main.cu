@@ -273,6 +273,8 @@ int main(const int argc, char **argv)
 	vertexId_t root = 0;
 	int rootsVisited = 0;
 
+	cout << "Begin" << endl;
+
 	StreamingBC sbc(options.numRoots);
 	sbc.Init(custing);
 	sbc.setInputParameters(bc);
@@ -285,17 +287,6 @@ int main(const int argc, char **argv)
 	float totalTime = end_clock(ce_start, ce_stop);
 	cout << "Total time for Betweenness Centrality Computation: " << totalTime << endl;
 
-	// Now, insert a random edge
-	vertexId_t src = rand() % nv;
-	vertexId_t dst = rand() % nv;
-	
-	cout << "About to insert edge: (" << src << ", " << dst << ")" << endl;
-	start_clock(ce_start, ce_stop);
-	sbc.InsertEdge(custing, src, dst);
-
-	totalTime = end_clock(ce_start, ce_stop);
-	cout << "Done inserting. Total time taken:  " << totalTime  << endl;
-
 	if (options.verbose) {
 		cout << "RESULTS: " << endl;
 
@@ -304,37 +295,55 @@ int main(const int argc, char **argv)
 		}
 	}
 
+	// Now, insert a random edge
+	vertexId_t src = rand() % nv + 1;
+	vertexId_t dst = rand() % nv;
+	
+	// TODO: remove
+	src = 1;
+	dst = 2;
+	
+	cout << "About to insert edge: (" << src << ", " << dst << ")" << endl;
+	start_clock(ce_start, ce_stop);
+	sbc.InsertEdge(custing, src, dst);
+
+	totalTime = end_clock(ce_start, ce_stop);
+	cout << "Done inserting. Total time taken:  " << totalTime  << endl;
+
 	cout << "=======================================" << endl;
 	cout << "Now doing brute force edge insertion" << endl;
 
 
 	// Add that same edge into the graph and run static bc on it
-	// TODO: figure out how to add edge
-	length_t allocs;
-	// auto bud = new BatchUpdateData(1, true, custing.nv);
-	BatchUpdateData bud(1 , true, custing.nv);
-	vertexId_t *srcs = bud.getSrc();
-	vertexId_t *dsts = bud.getDst();
-	srcs[0] = src;
-	dsts[0] = dst;
+	// length_t allocs;
+	// BatchUpdateData bud(1 , true, custing.nv);
+	// vertexId_t *srcs = bud.getSrc();
+	// vertexId_t *dsts = bud.getDst();
+	// srcs[0] = src;
+	// dsts[0] = dst;
+	
+	// // srcs[1] = dst;
+	// // dsts[1] = src;
 
-	BatchUpdate bu = BatchUpdate(bud);
+	// BatchUpdate bu = BatchUpdate(bud);
+	// custing.edgeInsertions(bu, allocs);
 
-	custing.edgeInsertions(bu, allocs);
+	// cout << "custing edges" << custing.ne << endl;
+	// cout << "custing vertices" << custing.nv << endl;
+	// TODO: double counting issue?
+
 
 	float *bc_static = new float[nv];
 	for (int k = 0; k < nv; k++) {
 		bc_static[k] = 0;
-	}	
+	}
 
 	StreamingBC sbc2(options.numRoots);
 	sbc2.Init(custing);
 	sbc2.setInputParameters(bc_static);
 
 	start_clock(ce_start, ce_stop);
-
 	sbc2.Run(custing);
-
 	totalTime = end_clock(ce_start, ce_stop);
 	cout << "Done with static. Total time taken:  " << totalTime  << endl;
 
@@ -342,11 +351,13 @@ int main(const int argc, char **argv)
 	for (int k = 0; k < nv; k++) {
 		if (bc_static[k] != bc[k]) {
 			same = false;
-			break;
+			if (options.verbose) {
+				cout << "IDX: " << k << "\tStatic: " << bc_static[k] << "\tStreaming: " << bc[k] << endl;
+			}
 		}
 	}
 
-	cout << "Are they same?   :: " << (same?"true":"false") << endl;
+	cout << "Are they equivalent? ==> " << (same?"true":"false") << endl;
 
 	// free resources
 	sbc.Reset();
