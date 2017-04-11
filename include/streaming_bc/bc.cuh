@@ -28,7 +28,7 @@ typedef struct {
 	vertexQueue levelQueue;
 	vertexQueue bfsQueue;
 	length_t numRoots;
-	vertexId_t root;
+	vertexId_t treeIdx;
 	bcTree** trees_d;
 
 	char* t;  // will take on values of UNTOUCHED, DOWN, or UP
@@ -41,6 +41,14 @@ typedef struct {
 	vertexId_t* frontierOffsets;
 
 } adjInsertData;
+
+typedef struct {
+	float* delta1;
+	float* delta2;
+	vertexId_t* sigma1;
+	vertexId_t* sigma2;
+} compdata;
+
 
 
 class StreamingBC:public StreamingAlgorithm {
@@ -90,7 +98,8 @@ public:
 	// Must pass a pointer to bc values (of length custing.nv)
 	void setInputParameters(float *bc_array);
 
-private:
+// TODO: Make private again
+// private:
 	bcForest *forest;
 	bcTree **trees_d;  // a device copy of the host array forest->trees_d
 	float *bc;  // the actual bc values array on the host
@@ -104,8 +113,8 @@ private:
 
 
 	// private helper functions
-	void insertionAdj(cuStinger& custing, vertexId_t* adjRoots_d,
-		vertexId_t adjCount);
+	void insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
+		vertexId_t* adjRoots_d, vertexId_t adjCount);
 
 	void insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
 		adjInsertData* data_d, vertexId_t treeIdx);
@@ -116,7 +125,7 @@ private:
 };
 
 
-class bcOperator:public StreamingAlgorithm {
+class bcOperator {
 public:
 
 	static __device__ __forceinline__ void bcExpandFrontier(cuStinger* custing,
@@ -205,33 +214,24 @@ public:
 		adjInsertData* data_d = (adjInsertData*) metadata;
 		bcTree* tree = data_d->trees_d[treeIdx];
 
-		// printf("Ch1\n");
-		data_d->root = treeIdx;
+		data_d->treeIdx = treeIdx;
 
 		for (vertexId_t i = 0; i < custing->nv; i++) {
 			data_d->dP[i] = 0;
 			data_d->t[i] = UNTOUCHED;
-			// printf("Ch2\n");
 			data_d->sigmaHat[i] = tree->sigma[i];
-			// printf("Ch3\n");
 			data_d->deltaHat[i] = 0;
  		}
 
  		vertexId_t ulow = tree->ulow;
 		vertexId_t uhigh = tree->uhigh;
 
-		// printf("Before enqueue\n");
-
 		data_d->levelQueue.enqueue(ulow);
 		data_d->bfsQueue.enqueue(ulow);
-
-		// printf("After\n");
 
 		data_d->t[ulow] = DOWN;
 		data_d->dP[ulow] = tree->sigma[uhigh];
 		data_d->sigmaHat[ulow] += data_d->dP[ulow];
-
-		// printf("Finished\n");
 	}
 
 	// Adjacent Insertion: BFS Expand Frontier
@@ -242,7 +242,7 @@ public:
 		vertexId_t w = dst;
 
 		adjInsertData* data_d = (adjInsertData*) metadata;
-		bcTree *tree = data_d->trees_d[data_d->root];
+		bcTree *tree = data_d->trees_d[data_d->treeIdx];
 
 		if (tree->d[w] == tree->d[v] + 1) {
 			if (data_d->t[w] == UNTOUCHED) {
@@ -253,7 +253,9 @@ public:
 				data_d->dP[w] = data_d->dP[v];
 
 			} else {
-				data_d->dP[w] += data_d->dP[v];
+				// use atomics
+				// data_d->dP[w] += data_d->dP[v];
+				atomicAdd(data_d->dP + w, data_d->dP[v]);
 			}
 
 			data_d->sigmaHat[w] += data_d->dP[v];
@@ -269,7 +271,7 @@ public:
 		vertexId_t w = dst;
 
 		adjInsertData* data_d = (adjInsertData*) metadata;
-		bcTree *tree = data_d->trees_d[data_d->root];
+		bcTree *tree = data_d->trees_d[data_d->treeIdx];
 
 		vertexId_t* sigmaHat = data_d->sigmaHat;
 		float* deltaHat = data_d->deltaHat;
@@ -278,31 +280,41 @@ public:
 		if (tree->d[w] == tree->d[v] + 1) {
 			if (data_d->t[v] == UNTOUCHED) {
 				// TODO: figure out how to enqueue to Q[level - 1]
+				// Why does this never happen??
+				printf("Enqueue to level: Q[level - 1]\n");
 				data_d->levelQueue.enqueue(v);
 				data_d->t[v] = UP;
 				deltaHat[v] = tree->delta[v];
 			}
 
-			deltaHat[v] += ((float) sigmaHat[v] / sigmaHat[w]) * (1 + deltaHat[w]);
+			// use atomics
+			// deltaHat[v] += ((float) sigmaHat[v] / sigmaHat[w]) * (1 + deltaHat[w]);
+			atomicAdd(deltaHat + v, ((float) sigmaHat[v] / sigmaHat[w]) * (1 + deltaHat[w]));
+
 
 			if (data_d->t[v] == UP && (v != tree->uhigh || w != tree->ulow)) {
-				deltaHat[v] -= ((float) tree->sigma[v] / tree->sigma[w]) * (1 + tree->delta[w]);
+				// use atomics
+				// deltaHat[v] -= ((float) tree->sigma[v] / tree->sigma[w]) * (1 + tree->delta[w]);
+				atomicAdd(deltaHat + v, -1 * ((float) tree->sigma[v] / tree->sigma[w]) * (1 + tree->delta[w]));
 			}
 
 			if (w != tree->root) {
 				// update BC values
-				data_d->bcVals[w] += deltaHat[w] - tree->delta[w];
+				// use atomics
+				// data_d->bcVals[w] += deltaHat[w] - tree->delta[w];
+				atomicAdd(data_d->bcVals + w, deltaHat[w] - tree->delta[w]);
+
 			}
 		}
 	}
 
-	// Adjacent Insertion: Completion
-	// Updates sigma and delta values
+	// Adjacent Insertion: Completion / Dependency Accumulation part 2
 	static __device__ __forceinline__ void insertionAdjEnd(cuStinger* custing,
 		vertexId_t src, void* metadata)
 	{
+		// Updates sigma and delta values
 		adjInsertData* data_d = (adjInsertData*) metadata;
-		bcTree *tree = data_d->trees_d[data_d->root];
+		bcTree *tree = data_d->trees_d[data_d->treeIdx];
 
 		tree->sigma[src] = data_d->sigmaHat[src];
 		if (data_d->t[src] == UNTOUCHED) {
@@ -310,7 +322,36 @@ public:
 		}
 	}
 
+
+	static __device__ __forceinline__ void comparison(cuStinger* custing,
+		vertexId_t src, void* metadata)
+	{
+		compdata* data = (compdata*) metadata;
+
+		printf("=========SIGMAS=======\n");
+		for (int i = 0; i < custing->nv; i++) {
+			if (data->sigma1[i] != data->sigma2[i]) {
+				printf("Mismatch:\tidx: %d [%d] != [%d]\n", i, data->sigma1[i], data->sigma2[i]);
+			}
+		}
+
+		printf("=========DELTAS=======\n");
+		for (int i = 0; i < custing->nv; i++) {
+			if (data->delta1[i] != data->delta2[i]) {
+				printf("Mismatch:\tidx: %d [%f] != [%f]\n", i, data->delta1[i], data->delta2[i]);
+			}
+		}
+
+	}
+
 }; // bcOperator
+
+
+/* FOR DEBUG ONLY */
+
+void compareStreamVsStatic(cuStinger& custing, StreamingBC& stream, StreamingBC& staticBC);
+
+/* END DEBUG */
 
 
 // diffs_h is an array of size numRoots that shows stores d[src] - d[dst] in each position

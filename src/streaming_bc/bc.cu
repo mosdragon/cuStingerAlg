@@ -244,26 +244,6 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 
 void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
-	vertexId_t *diffs_h = new vertexId_t[nr];
-	getDepthDifferences(custing, src, dst, nr, diffs_h, trees_d);
-
-	SyncHostWithDevice();  // copy all ulow, uhigh assignments to host
-
-	// the count of adjacent cases and nonadjacent cases
-	vertexId_t adj = 0;
-	vertexId_t nonadj = 0;
-	vertexId_t size;  // the overall size of the case array
-
-	vertexId_t* caseArray_h = buildCaseArray(diffs_h, nr, size, adj, nonadj);
-	vertexId_t* caseArray_d = (vertexId_t*) allocDeviceArray(size,
-		sizeof(vertexId_t));
-	copyArrayHostToDevice(caseArray_h, caseArray_d, size, sizeof(vertexId_t));
-
-	printf("Done adding (%d, %d) into custing\n", src, dst);
-
-
-	insertionAdj(custing, caseArray_d, adj);
-
 	// Insert edge into custing
 	length_t allocs;
 	BatchUpdateData bud(1 , true, custing.nv);
@@ -274,6 +254,26 @@ void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 
 	BatchUpdate bu = BatchUpdate(bud);
 	custing.edgeInsertions(bu, allocs);
+	printf("Done adding (%d, %d) into custing\n", src, dst);
+
+	// Now, handle the adj and nonadj cases
+	vertexId_t *diffs_h = new vertexId_t[nr];
+	getDepthDifferences(custing, src, dst, nr, diffs_h, trees_d);
+
+	SyncHostWithDevice();  // copy all ulow, uhigh assignments to host
+
+	// the count of adjacent cases and nonadjacent cases
+	vertexId_t adj;
+	vertexId_t nonadj;
+	vertexId_t size;  // the overall size of the case array
+
+	vertexId_t* caseArray_h = buildCaseArray(diffs_h, nr, size, adj, nonadj);
+	vertexId_t* caseArray_d = (vertexId_t*) allocDeviceArray(size,
+		sizeof(vertexId_t));
+	copyArrayHostToDevice(caseArray_h, caseArray_d, size, sizeof(vertexId_t));
+	
+	// handle adjacent cases
+	insertionAdj(custing, caseArray_h, caseArray_d, adj);
 
 	// Run original BFS and DA on these nonadj case roots
 	vertexId_t k;
@@ -283,7 +283,7 @@ void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 		forest->trees_h[k]->queue.resetQueue();
 		forest->trees_h[k]->currLevel = 0;
 
-		// TODO: Remove delta of this tree from the bc values
+		// Remove delta of this tree from the bc values
 		copyArrayDeviceToHost(forest->trees_h[k]->delta, host_deltas,
 			custing.nv, sizeof(float));
 
@@ -368,6 +368,8 @@ void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
 vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
 	vertexId_t& size, vertexId_t& adj, vertexId_t& nonadj)
 {
+	adj = 0;
+	nonadj = 0;
 	for (int k = 0; k < numRoots; k++) {
 		if (abs(diffs_h[k]) == 1) {
 			adj++;
@@ -376,10 +378,11 @@ vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
 		}
 	}
 
+	size = adj + nonadj;  // the size of the case array
+
 	// positions in the array of where to place each case type
 	vertexId_t posAdj = 0;  // index used for adjacent cases
 	vertexId_t posNonadj = adj;  // index used for nonadjacent cases
-	size = adj + nonadj;
 
 	vertexId_t* caseArray = new vertexId_t[size];
 
@@ -393,64 +396,74 @@ vertexId_t* buildCaseArray(vertexId_t* diffs_h, length_t numRoots,
 	return caseArray;
 }
 
-void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_d,
-	vertexId_t adjCount)
+void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
+	vertexId_t* adjRoots_d, vertexId_t adjCount)
 {
 
 	printf("insertionAdj begin\n");
-	adjInsertData data_h;
-	data_h.trees_d = trees_d;
-	data_h.numRoots = forest->numRoots;
-	data_h.levelQueue.Init(custing.nv + 1);
-	data_h.bfsQueue.Init(custing.nv + 1);
+	adjInsertData *data_h = new adjInsertData;
+	// adjInsertData *ptr_data_h = &data_h;
+	data_h->trees_d = trees_d;
+	data_h->numRoots = forest->numRoots;
+	data_h->levelQueue.Init(custing.nv + 1);
+	data_h->bfsQueue.Init(custing.nv + 1);
 
-	data_h.frontierOffsets = new vertexId_t[custing.nv];
+	data_h->frontierOffsets = new vertexId_t[custing.nv];
 
 	// TODO: optimize these allocations
-	data_h.t =  (char*) allocDeviceArray(custing.nv, sizeof(char));
-	data_h.dP = (vertexId_t*) allocDeviceArray(custing.nv, sizeof(vertexId_t));
-	data_h.sigmaHat = (vertexId_t*) allocDeviceArray(custing.nv, sizeof(vertexId_t));
-	data_h.deltaHat = (float*) allocDeviceArray(custing.nv, sizeof(float));
+	data_h->t =  (char*) allocDeviceArray(custing.nv, sizeof(char));
+	data_h->dP = (vertexId_t*) allocDeviceArray(custing.nv, sizeof(vertexId_t));
+	data_h->sigmaHat = (vertexId_t*) allocDeviceArray(custing.nv, sizeof(vertexId_t));
+	data_h->deltaHat = (float*) allocDeviceArray(custing.nv, sizeof(float));
 
 	// bcVals is a device copy of bc values
-	data_h.bcVals = (float*) allocDeviceArray(custing.nv, sizeof(float));
-	copyArrayHostToDevice(bc, data_h.bcVals, custing.nv, sizeof(float));
+	data_h->bcVals = (float*) allocDeviceArray(custing.nv, sizeof(float));
+	copyArrayHostToDevice(bc, data_h->bcVals, custing.nv, sizeof(float));
 
 	adjInsertData* data_d = (adjInsertData*) allocDeviceArray(1,
 		sizeof(adjInsertData));
-	copyArrayHostToDevice(&data_h, data_d, 1, sizeof(adjInsertData));
+	copyArrayHostToDevice(data_h, data_d, 1, sizeof(adjInsertData));
 
 	// run algorithm sequentially for each adjacent-case tree
 	for (int k = 0; k < adjCount; k++) {
-		printf("Loop begin\n");
+		// printf("Loop begin\n");
 		// Stage 1: Local initialization
-		data_h.levelQueue.resetQueue();
-		data_h.bfsQueue.resetQueue();
+		data_h->levelQueue.resetQueue();
+		data_h->bfsQueue.resetQueue();
 
 		allVinA_TraverseVertices<bcOperator::insertionAdjInit>(custing,
 			(void*) data_d, adjRoots_d + k, 1);
 
-		printf("Finished Stage 1\n");
+		// Copy data device to host
+		// copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
+
+		// Want to sync data_h->treeIdx with device copy
+		copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
+		data_h->bfsQueue.SyncHostWithDevice();
+		data_h->levelQueue.SyncHostWithDevice();
+
+		vertexId_t treeIdx = adjRoots_h[k];
 
 		// Stage 2: BFS Traversal starting at ulow
-		insertionAdjRunBFS(custing, &data_h, data_d, k);
-		printf("Finished Stage 2\n");
+		insertionAdjRunBFS(custing, data_h, data_d, treeIdx);
 
 		// Stage 3: Dependency accumulation
-		insertionAdjRunDA(custing, &data_h, data_d, k);
-		printf("Finished Stage 3\n");
-
+		insertionAdjRunDA(custing, data_h, data_d, treeIdx);
 	}
 
+	// copy bcvals onto host
+	copyArrayDeviceToHost(data_h->bcVals, bc, custing.nv, sizeof(float));
+
 	freeDeviceArray(data_d);
-	freeDeviceArray(data_h.t);
-	freeDeviceArray(data_h.dP);
-	freeDeviceArray(data_h.sigmaHat);
-	freeDeviceArray(data_h.deltaHat);
-	freeDeviceArray(data_h.bcVals);
+	freeDeviceArray(data_h->t);
+	freeDeviceArray(data_h->dP);
+	freeDeviceArray(data_h->sigmaHat);
+	freeDeviceArray(data_h->deltaHat);
+	freeDeviceArray(data_h->bcVals);
 	printf("Finished adj cases\n");
 
-	delete[] data_h.frontierOffsets;
+	delete[] data_h->frontierOffsets;
+	delete data_h;
 }
 
 void StreamingBC::insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
@@ -492,9 +505,11 @@ void StreamingBC::insertionAdjRunDA(cuStinger& custing, adjInsertData* data_h,
 	tree->currLevel-= 2;
 	SyncDeviceWithHost(treeIdx);
 	
+	vertexId_t* frontierOffsets = data_h->frontierOffsets;
+	
 	while (tree->currLevel > 0) {
-		length_t start = tree->offsets[tree->currLevel];
-		length_t end = tree->offsets[tree->currLevel + 1];
+		length_t start = frontierOffsets[tree->currLevel];
+		length_t end = frontierOffsets[tree->currLevel + 1];
 
 		data_h->bfsQueue.setQueueCurr(start);
 		data_h->bfsQueue.setQueueEnd(end);
@@ -518,6 +533,29 @@ void insertionNonadj(cuStinger& custing, vertexId_t* nonadjRoots,
 	vertexId_t nonadjCount, bcTree** trees_d)
 {
 
+}
+
+void compareStreamVsStatic(cuStinger& custing, StreamingBC& stream, StreamingBC& staticBC)
+{
+	compdata data_h;
+	compdata* data_d = (compdata*) allocDeviceArray(1, sizeof(compdata));
+
+	vertexId_t* dummy_node = (vertexId_t*) allocDeviceArray(1, sizeof(vertexId_t));
+
+	for (int i = 0; i < stream.nr; i++) {
+		printf("~~~~~~~~~~~~~~~~~~~Tree idx: %d~~~~~~~~~~~~~~~~~~~\n", i);
+		data_h.delta1 = stream.forest->trees_h[i]->delta;
+		data_h.sigma1 = stream.forest->trees_h[i]->sigma;
+
+		data_h.delta2 = staticBC.forest->trees_h[i]->delta;
+		data_h.sigma2 = staticBC.forest->trees_h[i]->sigma;
+
+		copyArrayHostToDevice(&data_h, data_d, 1, sizeof(compdata));
+		allVinA_TraverseVertices<bcOperator::comparison>(custing, (void*) data_d, dummy_node, 1);
+	}
+
+	freeDeviceArray(data_d);
+	freeDeviceArray(dummy_node);
 }
 
 } // cuStingerAlgs namespace

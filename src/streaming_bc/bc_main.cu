@@ -359,6 +359,11 @@ int main(const int argc, char **argv)
 
 	cout << "Are they equivalent? ==> " << (same?"true":"false") << endl;
 
+
+	cout << "COMPARISON:::::::::::::::::::::::::::" << endl;
+
+	// compareStreamVsStatic(custing, sbc, sbc2);
+
 	// free resources
 	sbc.Reset();
 	sbc.Release();
