@@ -176,71 +176,6 @@ void StreamingBC::DependencyAccumulation(cuStinger& custing, length_t k)
 	}
 }
 
-// TODO: Remove. This is brute force
-// void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
-// {
-// 	// vertexId_t *diffs_h = new vertexId_t[nr];
-// 	// getDepthDifferences(custing, src, dst, nr, diffs_h, trees_d);
-
-// 	// SyncHostWithDevice();  // copy all ulow, uhigh assignments to host
-
-// 	// the count of adjacent cases and nonadjacent cases
-// 	// vertexId_t adj = 0;
-// 	// vertexId_t nonadj = 0;
-// 	// vertexId_t size;  // the overall size of the case array
-
-// 	vertexId_t* caseArray_h = new vertexId_t[nr];
-// 	for (int i = 0; i < nr; i++) {
-// 		caseArray_h[i] = i;
-// 	}
-
-// 	// Run original BFS and DA on these nonadj case roots
-	
-// 	// Insert edge into custing
-// 	length_t allocs;
-// 	BatchUpdateData bud(1 , true, custing.nv);
-// 	vertexId_t *srcs = bud.getSrc();
-// 	vertexId_t *dsts = bud.getDst();
-// 	srcs[0] = src;
-// 	dsts[0] = dst;
-	
-// 	// srcs[1] = dst;
-// 	// dsts[1] = src;
-
-// 	BatchUpdate bu = BatchUpdate(bud);
-// 	custing.edgeInsertions(bu, allocs);
-
-// 	printf("Done adding (%d, %d) into custing\n", src, dst);
-
-// 	for (int i = 0; i < nr; i++) {
-// 		vertexId_t k = caseArray_h[i];
-
-// 		forest->trees_h[k]->queue.resetQueue();
-// 		forest->trees_h[k]->currLevel = 0;
-
-// 		// TODO: Remove delta of this tree from the bc values
-// 		copyArrayDeviceToHost(forest->trees_h[k]->delta, host_deltas,
-// 			custing.nv, sizeof(float));
-
-// 		for (int j = 0; j < custing.nv; j++) {
-// 			if (j != forest->trees_h[k]->root) {
-// 				bc[j] -= host_deltas[j];
-// 			}
-// 		}
-		
-// 		printf("K: %d\tidx: %d\n", k, i);
-// 		RunBfsTraversal(custing, k);
-// 		printf("Done BFS traversal\n");
-// 		DependencyAccumulation(custing, k);
-// 		printf("Done DA\n");
-// 	}
-
-// 	// insertionNonadj(custing, caseArray_d + adj, nonadj, trees_d);
-
-// 	// freeDeviceArray(caseArray_d);
-// 	// delete[] diffs_h;
-// 	delete[] caseArray_h;
-// }
 
 void StreamingBC::InsertEdge(cuStinger& custing, vertexId_t src, vertexId_t dst)
 {
@@ -443,11 +378,10 @@ void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
 		allVinA_TraverseVertices<bcOperator::insertionAdjInit>(custing,
 			(void*) data_d, adjRoots_d + k, 1);
 		
-		data_h->levelQueue.SyncHostWithDevice();
-		data_h->bfsQueue.SyncHostWithDevice();
-
 		// Want to sync data_h->treeIdx with device copy
 		copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
+		data_h->levelQueue.SyncHostWithDevice();
+		data_h->bfsQueue.SyncHostWithDevice();
 
 		// Stage 2: BFS Traversal starting at ulow
 		insertionAdjRunBFS(custing, data_h, data_d, treeIdx);
@@ -477,13 +411,15 @@ void StreamingBC::insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
 	for (int i = 0; i < custing.nv; i++) {
 		frontierOffsets[i] = 0;
 	}
-	// frontierOffsets[0] = 1;
+	frontierOffsets[0] = 1;
 
 	length_t prevEnd = 1;
+	printf("prevEnd: %d\n", prevEnd);
 	prevEnd = data_h->bfsQueue.getActiveQueueSize();  // SAME
+	printf("prevEnd: %d\n", prevEnd);
 	
 	bcTree *tree = forest->trees_h[treeIdx];
-	tree->currLevel = 0;
+	tree->currLevel = 1;
 	SyncDeviceWithHost(treeIdx);
 	while(data_h->bfsQueue.getActiveQueueSize() > 0) {
 		printf("While bfs\t\t\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);

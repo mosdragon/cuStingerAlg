@@ -230,6 +230,7 @@ public:
  		vertexId_t ulow = tree->ulow;
 		vertexId_t uhigh = tree->uhigh;
 		data_d->bfsQueue.enqueue(ulow);
+		data_d->levelQueue.enqueue(ulow);
 
 		data_d->t[ulow] = DOWN;
 		data_d->dP[ulow] = tree->sigma[uhigh];
@@ -328,7 +329,7 @@ public:
 
 
 	static __device__ __forceinline__ void comparison(cuStinger* custing,
-		vertexId_t src, void* metadata)
+		vertexId_t treeIdx, void* metadata)
 	{
 		compdata* data = (compdata*) metadata;
 
@@ -339,12 +340,12 @@ public:
 			}
 		}
 
-		printf("=========DELTAS=======\n");
-		for (int i = 0; i < custing->nv; i++) {
-			if (data->delta1[i] != data->delta2[i]) {
-				printf("Mismatch:\tidx: %d [%f] != [%f]\n", i, data->delta1[i], data->delta2[i]);
-			}
-		}
+		// printf("=========DELTAS=======\n");
+		// for (int i = 0; i < custing->nv; i++) {
+		// 	if (data->delta1[i] != data->delta2[i]) {
+		// 		printf("Mismatch:\tidx: %d [%f] != [%f]\n", i, data->delta1[i], data->delta2[i]);
+		// 	}
+		// }
 
 	}
 
