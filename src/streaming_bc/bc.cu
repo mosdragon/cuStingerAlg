@@ -443,8 +443,8 @@ void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
 		allVinA_TraverseVertices<bcOperator::insertionAdjInit>(custing,
 			(void*) data_d, adjRoots_d + k, 1);
 		
-		data_h->levelQueue.SyncDeviceWithHost();
-		data_h->bfsQueue.SyncDeviceWithHost();
+		data_h->levelQueue.SyncHostWithDevice();
+		data_h->bfsQueue.SyncHostWithDevice();
 
 		// Want to sync data_h->treeIdx with device copy
 		copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
@@ -487,9 +487,15 @@ void StreamingBC::insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
 	SyncDeviceWithHost(treeIdx);
 	while(data_h->bfsQueue.getActiveQueueSize() > 0) {
 		printf("While bfs\t\t\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
+
 		allVinA_TraverseEdges_LB<bcOperator::insertionAdjExpandFrontier>(custing,
 			(void*) data_d, *cusLB, data_h->bfsQueue);
+		
+		// Sync over queue data
 		SyncHostWithDevice(treeIdx);
+		data_h->levelQueue.SyncHostWithDevice();
+		data_h->bfsQueue.SyncHostWithDevice();
+		copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
 
 		data_h->bfsQueue.setQueueCurr(prevEnd);
 		prevEnd = data_h->bfsQueue.getQueueEnd();

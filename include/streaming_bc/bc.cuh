@@ -257,7 +257,7 @@ public:
 				data_d->dP[w] = data_d->dP[v];
 
 			} else {
-				// use atomics
+				// use atomics -- not needed
 				// data_d->dP[w] += data_d->dP[v];
 				atomicAdd(data_d->dP + w, data_d->dP[v]);
 			}
