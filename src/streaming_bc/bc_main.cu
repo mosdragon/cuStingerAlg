@@ -362,7 +362,7 @@ int main(const int argc, char **argv)
 
 	cout << "COMPARISON:::::::::::::::::::::::::::" << endl;
 
-	// compareStreamVsStatic(custing, sbc, sbc2);
+	compareStreamVsStatic(custing, sbc, sbc2);
 
 	// free resources
 	sbc.Reset();

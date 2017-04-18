@@ -122,6 +122,10 @@ public:
 	void insertionAdjRunDA(cuStinger& custing, adjInsertData* data_h,
 		adjInsertData* data_d, vertexId_t treeIdx);
 
+	// diffs_h is an array of size numRoots that shows stores d[src] - d[dst] in each position
+	void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
+		length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d);
+
 };
 
 
@@ -225,8 +229,6 @@ public:
 
  		vertexId_t ulow = tree->ulow;
 		vertexId_t uhigh = tree->uhigh;
-
-		data_d->levelQueue.enqueue(ulow);
 		data_d->bfsQueue.enqueue(ulow);
 
 		data_d->t[ulow] = DOWN;
@@ -238,6 +240,7 @@ public:
 	static __device__ __forceinline__ void insertionAdjExpandFrontier(
 		cuStinger* custing, vertexId_t src, vertexId_t dst, void* metadata)
 	{
+		printf("EXPAND FRONTIER BY SRC: %d\n", src);
 		vertexId_t v = src;
 		vertexId_t w = dst;
 
@@ -246,6 +249,7 @@ public:
 
 		if (tree->d[w] == tree->d[v] + 1) {
 			if (data_d->t[w] == UNTOUCHED) {
+				printf("ENQUEUE TO BFS\n");
 				data_d->bfsQueue.enqueue(w);
 				data_d->levelQueue.enqueue(w);
 				data_d->t[w] = DOWN;
@@ -354,9 +358,9 @@ void compareStreamVsStatic(cuStinger& custing, StreamingBC& stream, StreamingBC&
 /* END DEBUG */
 
 
-// diffs_h is an array of size numRoots that shows stores d[src] - d[dst] in each position
-void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
-	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d);
+// // diffs_h is an array of size numRoots that shows stores d[src] - d[dst] in each position
+// void getDepthDifferences(cuStinger& custing, vertexId_t src, vertexId_t dst,
+// 	length_t numRoots, vertexId_t* diffs_h, bcTree** trees_d);
 
 
 // Takes a diff_h array and creates an array with consecutive sections
