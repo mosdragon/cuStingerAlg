@@ -232,7 +232,6 @@ public:
  		vertexId_t ulow = tree->ulow;
 		vertexId_t uhigh = tree->uhigh;
 		data_d->bfsQueue.enqueue(ulow);
-		data_d->levelQueue.enqueue(ulow);
 
 		data_d->t[ulow] = DOWN;
 		data_d->dP[ulow] = tree->sigma[uhigh];
@@ -288,7 +287,7 @@ public:
 			if (data_d->t[v] == UNTOUCHED) {
 				// TODO: figure out how to enqueue to Q[level - 1]
 				// Why does this never happen??
-				printf("Enqueue to level: Q[level - 1]\n");
+				printf("Enqueue to level: Q[level - 1] = Q[%d] \n", tree->currLevel);
 				data_d->levelQueue.enqueue(v);
 				data_d->t[v] = UP;
 				deltaHat[v] = tree->delta[v];

@@ -362,8 +362,6 @@ void StreamingBC::getDepthDifferences(cuStinger& custing, vertexId_t src, vertex
 	// Free host memory
 	delete[] rootArray_h;
 	delete dDiffs_h;
-
-	SyncHostWithDevice();  // copy all ulow, uhigh assignments to host
 }
 
 
@@ -422,9 +420,6 @@ void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
 	data_h->bcVals = (float*) allocDeviceArray(custing.nv, sizeof(float));
 	copyArrayHostToDevice(bc, data_h->bcVals, custing.nv, sizeof(float));
 
-	// copy d[ulow] into data_h->ulow_depth
-	copyArrayDeviceToHost(tree->d + tree->ulow, &(data_h->ulow_depth), 1, sizeof(vertexId_t));
-
 	adjInsertData* data_d = (adjInsertData*) allocDeviceArray(1,
 		sizeof(adjInsertData));
 	copyArrayHostToDevice(data_h, data_d, 1, sizeof(adjInsertData));
@@ -435,21 +430,23 @@ void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
 		// Stage 1: Local initialization
 		data_h->levelQueue.resetQueue();
 		data_h->bfsQueue.resetQueue();
-		
+
 		data_h->levelQueue.SyncDeviceWithHost();
 		data_h->bfsQueue.SyncDeviceWithHost();
 
+		vertexId_t treeIdx = adjRoots_h[k];
+		bcTree *tree_h = forest->trees_h[treeIdx];
+		// copy d[ulow] into data_h->ulow_depth
+		copyArrayDeviceToHost(tree_h->d + tree_h->ulow, &(data_h->ulow_depth), 1, sizeof(vertexId_t));
+
 		// Copy over queue changes
 		copyArrayHostToDevice(data_h, data_d, 1, sizeof(adjInsertData));
-		vertexId_t treeIdx = adjRoots_h[k];
 
 		allVinA_TraverseVertices<bcOperator::insertionAdjInit>(custing,
 			(void*) data_d, adjRoots_d + k, 1);
 		
-		// Want to sync data_h->treeIdx with device copy
+		// Want to sync queues from device
 		copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
-		data_h->levelQueue.SyncHostWithDevice();
-		data_h->bfsQueue.SyncHostWithDevice();
 
 		// Stage 2: BFS Traversal starting at ulow
 		insertionAdjRunBFS(custing, data_h, data_d, treeIdx);
@@ -477,29 +474,37 @@ void StreamingBC::insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
 {
 	// frontier sizes of bfs queue
 	vertexId_t* frontierOffsets = data_h->frontierOffsets;
-	// for (int i = 0; i < custing.nv; i++) {
-	// 	frontierOffsets[i] = 0;
-	// }
-	
 	bcTree *tree = forest->trees_h[treeIdx];
 	tree->currLevel = data_h->ulow_depth;
 	
-	// Frontier at ulow depth is 1 --> for bfs queue only
+	// Frontier at depth d[ulow] is 1 for BFS queue
 	frontierOffsets[tree->currLevel] = 1;
 	length_t prevEnd = 1;
 
 	SyncDeviceWithHost(treeIdx);
 	while(data_h->bfsQueue.getActiveQueueSize() > 0) {
-		printf("While bfs\t\t\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
+		printf("While bfs\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
 
 		allVinA_TraverseEdges_LB<bcOperator::insertionAdjExpandFrontier>(custing,
 			(void*) data_d, *cusLB, data_h->bfsQueue);
 
-		data_h->bfsQueue.SyncHostWithDevice();
+		printf("After operator:\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
+
 		copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
+		// data_h->bfsQueue.SyncHostWithDevice();
+		// copyArrayDeviceToHost(data_d, data_h, 1, sizeof(adjInsertData));
+
+		printf("After copy:\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
 
 		data_h->bfsQueue.setQueueCurr(prevEnd);
 		prevEnd = data_h->bfsQueue.getQueueEnd();
+
+		printf("After endpoint change:\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
+
+		// Sync the queues
+		copyArrayHostToDevice(data_h, data_d, 1, sizeof(adjInsertData));
+
+		printf("After copyArrayHostToDevice:\tFRONTIER SIZE: %d\n", data_h->bfsQueue.getActiveQueueSize());fflush(NULL);
 
 		frontierOffsets[tree->currLevel] = data_h->levelQueue.getActiveQueueSize();
 
@@ -509,6 +514,7 @@ void StreamingBC::insertionAdjRunBFS(cuStinger& custing, adjInsertData* data_h,
 
 	// keep currLevel at the lowest frontier depth
 	tree->currLevel--;
+	SyncDeviceWithHost(treeIdx);
 }
 
 
@@ -520,17 +526,35 @@ void StreamingBC::insertionAdjRunDA(cuStinger& custing, adjInsertData* data_h,
 	// Iterate backwards through depths, starting from deepest frontier	
 	SyncDeviceWithHost(treeIdx);
 	
-	vertexId_t* offsets = data_h->frontierOffsets;
+	vertexId_t* frontierOffsets = data_h->frontierOffsets;
 
-	// Set deepest frontier as active queue
-	length_t start; // = frontierOffsets[tree->currLevel - 1];
-	length_t end; // = frontierOffsets[tree->currLevel];
+	length_t start;
+	length_t end;
+
+	// First, visit deepest frontier in BFS queue
+	if (tree->currLevel > 0 && tree->currLevel > data_h->ulow_depth) {
+		// Set deepest frontier as active queue
+		start = frontierOffsets[tree->currLevel - 1];
+		end = frontierOffsets[tree->currLevel];
+
+		data_h->bfsQueue.setQueueCurr(start);
+		data_h->bfsQueue.setQueueEnd(end);
+		data_h->bfsQueue.SyncDeviceWithHost();
+		// SyncDeviceWithHost(treeIdx);
+
+		// This will populate the level queue at one level below
+		allVinA_TraverseEdges_LB<bcOperator::insertionAdjDA>(custing,
+			(void*) data_d, *cusLB, data_h->bfsQueue);
+
+		tree->currLevel--;
+		SyncDeviceWithHost(treeIdx);
+	}
 
 	length_t levelstart = 0;
 	length_t levelend = 0;
 
 	while (tree->currLevel > 0) {
-		// printf("Level: %d\tidx: %d\tsize: %d\n", tree->currLevel - level, level, offsets[level]);fflush(NULL);
+		// printf("Level: %d\tidx: %d\tsize: %d\n", tree->currLevel - level, level, frontierOffsets[level]);fflush(NULL);
 
 		
 		// if (levelstart != 0 && levelend != 0) {
@@ -547,7 +571,7 @@ void StreamingBC::insertionAdjRunDA(cuStinger& custing, adjInsertData* data_h,
 		data_h->levelQueue.setQueueCurr(levelstart);
 		data_h->levelQueue.setQueueEnd(levelend);
 		data_h->levelQueue.SyncDeviceWithHost();
-		SyncDeviceWithHost(treeIdx);
+		// SyncDeviceWithHost(treeIdx);
 
 		allVinA_TraverseEdges_LB<bcOperator::insertionAdjDA>(custing,
 			(void*) data_d, *cusLB, data_h->levelQueue);
@@ -576,6 +600,7 @@ void StreamingBC::insertionAdjRunDA(cuStinger& custing, adjInsertData* data_h,
 		}
 
 		tree->currLevel--;
+		SyncDeviceWithHost(treeIdx);
 	}
 
 	// while (level < tree->currLevel && offsets[level] > 0) {
