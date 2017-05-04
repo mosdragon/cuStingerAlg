@@ -191,6 +191,8 @@ public:
 	{
 		depthDiffs* dDiffs_d = (depthDiffs*) metadata;
 
+		printf("preprocessEdge treeIdx: %d\n", treeIdx);
+
 		vertexId_t src = dDiffs_d->src;
 		vertexId_t dst = dDiffs_d->dst;
 
@@ -210,6 +212,8 @@ public:
 			tree_d->ulow = src;
 			tree_d->uhigh = dst;
 		}
+
+		printf("ulow depth DEVICE: %d\n", depths[tree_d->ulow]);
 	}
 
 
@@ -350,12 +354,27 @@ public:
 
 	}
 
+	// TODO: REMOVE
+	static __device__ __forceinline__ void checkDepths(cuStinger* custing,
+		vertexId_t ignore, void* metadata) {
+
+		bcTree* bcd = (bcTree*) metadata;
+
+		printf("=========depths=======\n");
+		for (int i = 0; i < custing->nv; i++) {
+			printf("THEDEPTH: %d\n", bcd->d[i]);
+		}
+
+	}
+
 }; // bcOperator
 
 
 /* FOR DEBUG ONLY */
 
 void compareStreamVsStatic(cuStinger& custing, StreamingBC& stream, StreamingBC& staticBC);
+
+void checkDepths(cuStinger& custing, StreamingBC& stream);
 
 /* END DEBUG */
 

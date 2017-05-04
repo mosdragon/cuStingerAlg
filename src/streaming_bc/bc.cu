@@ -435,9 +435,13 @@ void StreamingBC::insertionAdj(cuStinger& custing, vertexId_t* adjRoots_h,
 		data_h->bfsQueue.SyncDeviceWithHost();
 
 		vertexId_t treeIdx = adjRoots_h[k];
+		data_h->treeIdx = treeIdx;
+
 		bcTree *tree_h = forest->trees_h[treeIdx];
 		// copy d[ulow] into data_h->ulow_depth
 		copyArrayDeviceToHost(tree_h->d + tree_h->ulow, &(data_h->ulow_depth), 1, sizeof(vertexId_t));
+
+		printf("ulow depth host: %d\n", data_h->ulow_depth);
 
 		// Copy over queue changes
 		copyArrayHostToDevice(data_h, data_d, 1, sizeof(adjInsertData));
@@ -665,7 +669,8 @@ void insertionNonadj(cuStinger& custing, vertexId_t* nonadjRoots,
 {
 
 }
-
+ 
+// TODO: REMOVE
 void compareStreamVsStatic(cuStinger& custing, StreamingBC& stream, StreamingBC& staticBC)
 {
 	compdata data_h;
@@ -686,6 +691,17 @@ void compareStreamVsStatic(cuStinger& custing, StreamingBC& stream, StreamingBC&
 	}
 
 	freeDeviceArray(data_d);
+	freeDeviceArray(dummy_node);
+}
+
+// TODO: REMOVE
+void checkDepths(cuStinger& custing, StreamingBC& stream) {
+	vertexId_t* dummy_node = (vertexId_t*) allocDeviceArray(1, sizeof(vertexId_t));
+
+	for (int i = 0; i < stream.nr; i++) {
+		printf("~~~~~~~~~~~~~~~~~~~Tree idx: %d~~~~~~~~~~~~~~~~~~~\n", i);
+		allVinA_TraverseVertices<bcOperator::checkDepths>(custing, (void*) stream.forest->trees_d[i], dummy_node, 1);
+	}
 	freeDeviceArray(dummy_node);
 }
 
