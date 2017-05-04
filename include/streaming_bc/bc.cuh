@@ -254,21 +254,23 @@ public:
 		bcTree *tree = data_d->trees_d[data_d->treeIdx];
 
 		if (tree->d[w] == tree->d[v] + 1) {
-			if (data_d->t[w] == UNTOUCHED) {
+
+			vertexId_t prev = atomicCAS(data_d->t+w ,UNTOUCHED, DOWN);
+			if (prev == UNTOUCHED) {
 				printf("ENQUEUE TO BFS\n");
 				data_d->bfsQueue.enqueue(w);
-
-				data_d->t[w] = DOWN;
 				tree->d[w] = tree->d[v] + 1;
-				data_d->dP[w] = data_d->dP[v];
-
-			} else {
-				// use atomics -- not needed
-				// data_d->dP[w] += data_d->dP[v];
-				atomicAdd(data_d->dP + w, data_d->dP[v]);
 			}
+			// 	data_d->dP[w] = data_d->dP[v];
 
-			data_d->sigmaHat[w] += data_d->dP[v];
+			// } else {
+			// 	// use atomics -- not needed
+			// 	// data_d->dP[w] += data_d->dP[v];
+			// 	atomicAdd(data_d->dP + w, data_d->dP[v]);
+			// }
+			atomicAdd(data_d->dP + w, data_d->dP[v]);
+
+			atomicAdd(data_d->sigmaHat+w, data_d->dP[v]);
 		}
 	}
 
@@ -288,12 +290,13 @@ public:
 
 		// ensure v belongs to P[w]
 		if (tree->d[w] == tree->d[v] + 1) {
-			if (data_d->t[v] == UNTOUCHED) {
+			vertexId_t prev = atomicCAS(data_d->t+v ,UNTOUCHED, UP);
+
+			if (prev == UNTOUCHED) {
 				// TODO: figure out how to enqueue to Q[level - 1]
 				// Why does this never happen??
 				printf("Enqueue to level: Q[level - 1] = Q[%d] \n", tree->currLevel);
 				data_d->levelQueue.enqueue(v);
-				data_d->t[v] = UP;
 				deltaHat[v] = tree->delta[v];
 			}
 
